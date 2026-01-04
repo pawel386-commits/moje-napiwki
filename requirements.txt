@@ -1,0 +1,6 @@
+streamlit
+pandas
+holidays
+requests
+plotly
+statsmodels
