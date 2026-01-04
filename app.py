@@ -13,15 +13,39 @@ DB_FILE = "dane_napiwkow.csv"
 
 st.set_page_config(page_title="Kalkulator Napiwków", layout="wide")
 
-# Stylizacja CSS dla wyglądu "DPD"
+# --- STYLIZACJA CSS (KLONOWANIE WYGLĄDU ZE SCREENA) ---
 st.markdown("""
     <style>
-    .main { background-color: #f5f5f5; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border-left: 5px solid #dc3545; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); }
-    .calendar-card { background-color: white; border-radius: 10px; padding: 10px; border: 1px solid #ddd; text-align: center; min-height: 80px; }
-    .calendar-day-num { font-weight: bold; color: #555; text-align: left; }
-    .tip-value { background-color: #dc3545; color: white; border-radius: 15px; padding: 2px 8px; font-size: 0.8em; margin-top: 5px; display: inline-block; }
-    .header-box { background-color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    
+    .main { background-color: #fcfcfc; }
+    header {visibility: hidden;}
+    
+    /* Górne menu */
+    .top-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #eee; margin-bottom: 20px; }
+    .logo-text { color: #dc3545; font-weight: bold; font-size: 20px; display: flex; align-items: center; }
+    
+    /* Metryki u góry */
+    .metric-container { background: #dc3545; color: white; border-radius: 10px; padding: 15px; text-align: center; }
+    .metric-label { font-size: 0.8rem; opacity: 0.9; }
+    .metric-value { font-size: 1.4rem; font-weight: bold; }
+
+    /* Kalendarz */
+    .weekday-header { background-color: #dc3545; color: white; padding: 10px; text-align: center; font-weight: bold; border: 0.5px solid #c82333; }
+    .cal-cell { border: 0.5px solid #eee; min-height: 100px; padding: 5px; background: white; position: relative; }
+    .day-num { font-size: 1rem; color: #666; font-weight: bold; margin-bottom: 10px; }
+    .tip-pill { background-color: #dc3545; color: white; border-radius: 20px; padding: 4px 12px; font-weight: bold; font-size: 0.9rem; text-align: center; margin: 5px auto; width: 80%; }
+    .holiday-cell { background-color: #fff5f5; }
+
+    /* Dolne panele */
+    .footer-card { background: #dc3545; color: white; border-radius: 15px; padding: 25px; text-align: center; min-height: 150px; }
+    .footer-label { font-size: 1rem; margin-bottom: 10px; }
+    .footer-value { font-size: 1.8rem; font-weight: bold; }
+    
+    /* Ukrywanie standardowych przycisków streamlit by wyglądały jak kafelki */
+    .stButton button { width: 100%; background: transparent; border: none; height: 100px; position: absolute; top: 0; left: 0; z-index: 10; color: transparent; }
+    .stButton button:hover { background: rgba(220, 53, 69, 0.05); color: transparent; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -32,90 +56,95 @@ def load_data():
         return df
     return pd.DataFrame(columns=['data', 'napiwki', 'dostawy', 'temp', 'deszcz'])
 
+def save_entry(d, t_val, d_val):
+    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={LAT}&longitude={LON}&start_date={d}&end_date={d}&daily=temperature_2m_max,precipitation_sum&timezone=Europe/Warsaw"
+    try:
+        r = requests.get(url).json()
+        temp = r['daily']['temperature_2m_max'][0]
+        rain = r['daily']['precipitation_sum'][0]
+    except:
+        temp, rain = 20, 0
+    
+    df = load_data()
+    new_data = pd.DataFrame([{'data': d, 'napiwki': t_val, 'dostawy': d_val, 'temp': temp, 'deszcz': rain}])
+    df = pd.concat([df, new_data]).drop_duplicates(subset=['data'], keep='last')
+    df.to_csv(DB_FILE, index=False)
+
+# --- OKNO DIALOGOWE (POPUP) ---
+@st.dialog("Dodaj napiwek")
+def edit_day(target_date):
+    st.write(f"📅 Dzień: **{target_date}**")
+    t_input = st.number_input("Suma napiwków (zł)", min_value=0.0, step=5.0)
+    d_input = st.number_input("Liczba dostaw", min_value=1, step=1)
+    if st.button("Zapisz"):
+        save_entry(target_date, t_input, d_input)
+        st.rerun()
+
+# --- INTERFEJS ---
 df = load_data()
+dzis = date.today()
 
-# --- HEADER I STATYSTYKI ---
-with st.container():
-    col_logo, col_user = st.columns([5, 1])
-    col_logo.subheader("🔴 Kalkulator napiwków")
-    col_user.write("Użytkownik: **Kurier**")
+# Top Bar
+st.markdown("""<div class='top-bar'><div class='logo-text'>dpd &nbsp; <span style='color:#333; font-weight:normal; font-size:16px;'>Kalkulator napiwków</span></div><div>Paweł &nbsp; <span style='color:#dc3545; font-weight:bold;'>Wyloguj</span></div></div>""", unsafe_allow_html=True)
 
-    # Obliczenia do metryk
-    dzis = date.today()
-    miesiac_df = df[pd.to_datetime(df['data']).dt.month == dzis.month]
-    total_tips = miesiac_df['napiwki'].sum()
-    avg_tip = miesiac_df['napiwki'].mean() if not miesiac_df.empty else 0
-    work_days = len(miesiac_df)
+# Statystyki Miesięczne
+mies_df = df[pd.to_datetime(df['data']).dt.month == dzis.month]
+total_m = mies_df['napiwki'].sum()
+avg_m = mies_df['napiwki'].mean() if not mies_df.empty else 0
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Razem w miesiącu", f"{total_tips:.2f} zł")
-    m2.metric("Średnia dzienna", f"{avg_tip:.2f} zł")
-    m3.metric("Dni pracy", f"{work_days}")
+c_h1, c_h2, c_h3, c_h4, c_h5 = st.columns([2, 1, 1, 1, 1])
+with c_h1: st.markdown(f"### < {calendar.month_name[dzis.month]} {dzis.year} >", unsafe_allow_html=True)
+with c_h3: st.markdown(f"<div class='metric-container'><div class='metric-label'>Razem w miesiącu</div><div class='metric-value'>{total_m:.2f} zł</div></div>", unsafe_allow_html=True)
+with c_h4: st.markdown(f"<div class='metric-container'><div class='metric-label'>Średnia dzienna</div><div class='metric-value'>{avg_m:.2f} zł</div></div>", unsafe_allow_html=True)
+with c_h5: st.markdown(f"<div class='metric-container'><div class='metric-label'>Dni pracy</div><div class='metric-value'>{len(mies_df)}/22</div></div>", unsafe_allow_html=True)
 
-# --- INTERAKTYWNY KALENDARZ ---
-st.markdown(f"### < {calendar.month_name[dzis.month]} {dzis.year} >", unsafe_allow_html=True)
+st.write("")
 
-# Generowanie siatki kalendarza
+# Kalendarz
 cal = calendar.Calendar(firstweekday=0)
-month_days = cal.monthdatescalendar(dzis.year, dzis.month)
+weeks = cal.monthdatescalendar(dzis.year, dzis.month)
 
-# Nagłówki dni tygodnia
-cols = st.columns(7)
+# Nagłówki dni
+h_cols = st.columns(7)
 weekdays = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"]
-for i, day_name in enumerate(weekdays):
-    cols[i].markdown(f"<p style='text-align:center; font-weight:bold; color:#dc3545;'>{day_name}</p>", unsafe_allow_html=True)
+for i, name in enumerate(weekdays):
+    h_cols[i].markdown(f"<div class='weekday-header'>{name}</div>", unsafe_allow_html=True)
 
-for week in month_days:
+# Siatka dni
+for week in weeks:
     cols = st.columns(7)
-    for i, day in enumerate(week):
-        if day.month == dzis.month:
-            # Sprawdzanie czy są dane dla tego dnia
-            day_data = df[df['data'] == day]
-            tip_html = ""
-            if not day_data.empty:
-                tip_val = day_data.iloc[0]['napiwki']
-                tip_html = f"<div class='tip-value'>{tip_val} zł</div>"
-            
-            # Kolorowanie tła dla świąt/niedziel
-            bg_color = "#fff"
-            if day in PL_HOLIDAYS or day.weekday() == 6: bg_color = "#f8d7da"
-            
-            cols[i].markdown(f"""
-                <div class="calendar-card" style="background-color: {bg_color};">
-                    <div class="calendar-day-num">{day.day}</div>
-                    {tip_html}
-                </div>
-            """, unsafe_allow_html=True)
-        else:
-            cols[i].write("")
+    for i, d in enumerate(week):
+        with cols[i]:
+            if d.month == dzis.month:
+                day_data = df[df['data'] == d]
+                tip_val = day_data.iloc[0]['napiwki'] if not day_data.empty else None
+                
+                is_hol = d in PL_HOLIDAYS or d.weekday() == 6
+                bg_style = "holiday-cell" if is_hol else ""
+                
+                # Renderowanie kafelka
+                st.markdown(f"""<div class="cal-cell {bg_style}"><div class="day-num">{d.day}</div></div>""", unsafe_allow_html=True)
+                if tip_val is not None:
+                    st.markdown(f"""<div style="position:absolute; top:40px; width:90%; left:5%;"><div class="tip-pill">{tip_val} zł</div></div>""", unsafe_allow_html=True)
+                
+                # Przycisk "Klikalny Kafelek"
+                if st.button(f"btn_{d}", key=f"d_{d}"):
+                    edit_day(d)
+            else:
+                st.markdown("<div class='cal-cell' style='background:#f9f9f9;'></div>", unsafe_allow_html=True)
 
-# --- PANEL EDYCJI (POD KALENDARZEM) ---
-st.divider()
-with st.expander("➕ Dodaj / Edytuj napiwek", expanded=True):
-    col_date, col_tips, col_del, col_btn = st.columns([2, 2, 2, 1])
-    with col_date:
-        edit_date = st.date_input("Wybierz dzień z kalendarza", dzis)
-    with col_tips:
-        new_tips = st.number_input("Suma napiwków (zł)", min_value=0.0)
-    with col_del:
-        new_del = st.number_input("Liczba dostaw", min_value=1)
-    with col_btn:
-        st.write(" ") # margines
-        if st.button("Zapisz"):
-            # Pobieranie pogody
-            url = f"https://archive-api.open-meteo.com/v1/archive?latitude={LAT}&longitude={LON}&start_date={edit_date}&end_date={edit_date}&daily=temperature_2m_max,precipitation_sum&timezone=Europe/Warsaw"
-            r = requests.get(url).json()
-            t = r['daily']['temperature_2m_max'][0]
-            rain = r['daily']['precipitation_sum'][0]
-            
-            new_entry = pd.DataFrame([{'data': edit_date, 'napiwki': new_tips, 'dostawy': new_del, 'temp': t, 'deszcz': rain}])
-            df = pd.concat([df, new_entry]).drop_duplicates(subset=['data'], keep='last')
-            df.to_csv(DB_FILE, index=False)
-            st.rerun()
+st.write("")
 
-# --- ANALIZA NA DOLE ---
-if st.button("📊 Pokaż szczegółową analizę pogody"):
-    if not df.empty:
-        df['zl_na_dostawe'] = df['napiwki'] / df['dostawy']
-        fig = fig = requests.get # Tutaj można dodać wykres plotly jak w poprzedniej wersji
-        st.scatter_chart(df, x="deszcz", y="zl_na_dostawe")
+# Panele dolne
+f1, f2, f3 = st.columns(3)
+with f1:
+    best_day = df.loc[df['napiwki'].idxmax()] if not df.empty else None
+    val = f"{best_day['data'].day} {calendar.month_name[best_day['data'].month]}" if best_day is not None else "---"
+    st.markdown(f"<div class='footer-card'><div class='footer-label'>Najlepszy dzień</div><div class='footer-value'>{val}</div></div>", unsafe_allow_html=True)
+with f2:
+    st.markdown(f"<div class='footer-card'><div class='footer-label'>Średnia tygodniowa</div><div class='footer-value'>{avg_m*5:.2f} zł</div></div>", unsafe_allow_html=True)
+with f3:
+    st.markdown(f"<div class='footer-card'><div class='footer-label'>Trend</div><div class='footer-value'>Świetny 🔥</div></div>", unsafe_allow_html=True)
+
+# Przycisk eksportu (mały, biały u góry jak na screenie)
+st.sidebar.download_button("📤 Eksportuj dane", df.to_csv(index=False), "dane.csv")
